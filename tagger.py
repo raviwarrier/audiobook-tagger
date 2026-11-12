@@ -9,7 +9,7 @@ from tkinter import filedialog
 import requests
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.id3 import (
-    ID3, TIT2, TIT3, TALB, TPE1, TPE2, TCOM, TPUB, TDRC,
+    ID3, TIT2, TIT3, TALB, TPE1, TPE2, TPUB, TDRC,
     TCON, COMM, APIC, TXXX, ID3NoHeaderError
 )
 
@@ -247,48 +247,58 @@ def write_m4b_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
     if audio.tags is None:
         audio.add_tags()
 
+    # Title -> ALBUM & TITLE
     if meta.get("title"):
         audio.tags["\xa9alb"] = [meta["title"]]
         audio.tags["\xa9nam"] = [meta["title"]]
 
+    # Sub Title -> SUBTITLE
     if meta.get("subtitle"):
         audio.tags["----:com.apple.iTunes:SUBTITLE"] = [meta["subtitle"].encode("utf-8")]
 
+    # Author(s) -> ALBUMARTIST & ARTIST
     if meta.get("author"):
         audio.tags["aART"] = [meta["author"]]
+        audio.tags["\xa9ART"] = [meta["author"]]
 
-    composer_val = meta.get("narrator") or meta.get("author")
-    if composer_val:
-        for atom in ("\xa9wrt", "\xa9ART", "----:com.apple.iTunes:COMPOSER", "----:com.apple.iTunes:NARRATOR"):
-            audio.tags.pop(atom, None)
-        audio.tags["\xa9wrt"] = [composer_val]
-        audio.tags["\xa9ART"] = [composer_val]
-        audio.tags["----:com.apple.iTunes:NARRATOR"] = [composer_val.encode("utf-8")]
+    # Remove COMPOSER so ABS doesn't misread it, and set NARRATOR strictly
+    audio.tags.pop("\xa9wrt", None)
+    audio.tags.pop("----:com.apple.iTunes:COMPOSER", None)
+    audio.tags.pop("----:com.apple.iTunes:NARRATOR", None)
+    if meta.get("narrator"):
+        audio.tags["----:com.apple.iTunes:NARRATOR"] = [meta["narrator"].encode("utf-8")]
 
+    # Publisher -> PUBLISHER
     if meta.get("publisher"):
         audio.tags["\xa9pub"] = [meta["publisher"]]
         audio.tags["----:com.apple.iTunes:PUBLISHER"] = [meta["publisher"].encode("utf-8")]
 
+    # Release Date -> YEAR (4-digit year only)
     if meta.get("publishedYear"):
         audio.tags["\xa9day"] = [str(meta["publishedYear"])]
 
+    # Description -> COMMENT
     if meta.get("description"):
         audio.tags["\xa9cmt"] = [meta["description"]]
 
+    # Genre -> GENRE
     if meta.get("genres"):
         audio.tags["\xa9gen"] = [", ".join(meta["genres"])]
 
+    # ASIN & ISBN
     if meta.get("asin"):
         audio.tags["----:com.apple.iTunes:ASIN"] = [meta["asin"].encode("utf-8")]
     if meta.get("isbn"):
         audio.tags["----:com.apple.iTunes:ISBN"] = [meta["isbn"].encode("utf-8")]
 
+    # Series & Sequence
     if meta.get("series"):
         primary = meta["series"][0]
         audio.tags["----:com.apple.iTunes:SERIES"] = [primary["series"].encode("utf-8")]
         if primary.get("sequence"):
             audio.tags["----:com.apple.iTunes:SERIES-PART"] = [primary["sequence"].encode("utf-8")]
 
+    # Front Cover
     if cover_bytes:
         img_format = MP4Cover.FORMAT_PNG if meta.get("cover", "").lower().endswith(".png") else MP4Cover.FORMAT_JPEG
         audio.tags["covr"] = [MP4Cover(cover_bytes, imageformat=img_format)]
@@ -303,56 +313,67 @@ def write_mp3_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
     except ID3NoHeaderError:
         tags = ID3()
 
+    # Title -> ALBUM & TITLE
     if meta.get("title"):
         tags.delall("TALB")
         tags.delall("TIT2")
         tags.add(TALB(encoding=3, text=meta["title"]))
         tags.add(TIT2(encoding=3, text=meta["title"]))
 
+    # Sub Title -> SUBTITLE
     if meta.get("subtitle"):
         tags.delall("TIT3")
         tags.add(TIT3(encoding=3, text=meta["subtitle"]))
         tags.add(TXXX(encoding=3, desc="SUBTITLE", text=meta["subtitle"]))
 
+    # Author(s) -> ALBUMARTIST & ARTIST
     if meta.get("author"):
         tags.delall("TPE2")
-        tags.add(TPE2(encoding=3, text=meta["author"]))
-
-    composer_val = meta.get("narrator") or meta.get("author")
-    if composer_val:
-        tags.delall("TCOM")
         tags.delall("TPE1")
-        tags.add(TCOM(encoding=3, text=composer_val))
-        tags.add(TPE1(encoding=3, text=composer_val))
-        tags.add(TXXX(encoding=3, desc="NARRATOR", text=composer_val))
+        tags.add(TPE2(encoding=3, text=meta["author"]))
+        tags.add(TPE1(encoding=3, text=meta["author"]))
 
+    # Remove COMPOSER (TCOM) and set NARRATOR strictly
+    tags.delall("TCOM")
+    tags.delall("TXXX:COMPOSER")
+    tags.delall("TXXX:NARRATOR")
+    if meta.get("narrator"):
+        tags.add(TXXX(encoding=3, desc="NARRATOR", text=meta["narrator"]))
+
+    # Publisher -> PUBLISHER
     if meta.get("publisher"):
         tags.delall("TPUB")
         tags.add(TPUB(encoding=3, text=meta["publisher"]))
 
+    # Release Date -> YEAR (4-digit year only)
     if meta.get("publishedYear"):
         tags.delall("TDRC")
         tags.add(TDRC(encoding=3, text=str(meta["publishedYear"])))
 
+    # Description -> COMMENT
     if meta.get("description"):
         tags.delall("COMM")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=meta["description"]))
 
+    # Genre -> GENRE
     if meta.get("genres"):
         tags.delall("TCON")
         tags.add(TCON(encoding=3, text=", ".join(meta["genres"])))
 
+    # ASIN & ISBN
     if meta.get("asin"):
         tags.add(TXXX(encoding=3, desc="ASIN", text=meta["asin"]))
     if meta.get("isbn"):
         tags.add(TXXX(encoding=3, desc="ISBN", text=meta["isbn"]))
 
+    # Series & Sequence
     if meta.get("series"):
         primary = meta["series"][0]
         tags.add(TXXX(encoding=3, desc="SERIES", text=primary["series"]))
         if primary.get("sequence"):
             tags.add(TXXX(encoding=3, desc="SERIES-PART", text=primary["sequence"]))
 
+    # Front Cover
     if cover_bytes:
         tags.delall("APIC")
         mime = "image/png" if meta.get("cover", "").lower().endswith(".png") else "image/jpeg"
@@ -529,8 +550,8 @@ def main():
         if not meta:
             continue
 
-        composer_display = meta.get("narrator") or meta.get("author") or "N/A"
-        print(f"    [+] Matched: '{meta.get('title')}' ({meta.get('publishedYear') or 'N/A'}) by {meta.get('author')} | Composer/Narrator: {composer_display}")
+        narrator_display = meta.get("narrator") or "N/A"
+        print(f"    [+] Matched: '{meta.get('title')}' ({meta.get('publishedYear') or 'N/A'}) by {meta.get('author')} | Narrator: {narrator_display}")
 
         cover_bytes = download_cover_bytes(meta.get("cover"))
         try:
