@@ -38,7 +38,7 @@ def sanitize_filename(name: str) -> str:
 
 
 def normalize_for_comparison(text: str) -> str:
-    """Strips subtitles, punctuation, and extra spaces for title comparison."""
+    """Strips subtitles, punctuation, and extra spaces for title/author comparison."""
     if not text:
         return ""
     base = text.split(":")[0].split("(")[0]
@@ -64,6 +64,19 @@ def is_title_match(searched_title: str, found_title: str) -> bool:
     found_words = set(norm_found.split())
     matches = sum(1 for w in search_words if w in found_words)
     return (matches / len(search_words)) >= 0.8
+
+
+def is_author_match(searched_author: str | None, found_author: str | None) -> bool:
+    """Checks if at least one significant word from searched_author appears in found_author."""
+    if not searched_author or not searched_author.strip():
+        return True
+    if not found_author:
+        return False
+    s_words = [w for w in normalize_for_comparison(searched_author).split() if len(w) > 2]
+    if not s_words:
+        s_words = normalize_for_comparison(searched_author).split()
+    f_norm = normalize_for_comparison(found_author)
+    return any(w in f_norm for w in s_words)
 
 
 def clean_series_sequence(sequence: str) -> str:
@@ -124,17 +137,18 @@ def clean_result(item: dict) -> dict:
 
 
 def fetch_book_details(title: str, author: str = None, region: str = "us", timeout: int = 10) -> list:
-    """Searches Audible Catalog, enriches via Audnex, falls back to OpenLibrary."""
+    """Searches Audible Catalog, enriches via Audnex, and falls back to OpenLibrary if no match is found."""
     if not title or not title.strip():
         return []
 
     tld = REGION_MAP.get(region.lower().strip(), ".com")
+    all_results = []
     products = []
 
     # 1. Primary Audible Catalog Search (title + optional author)
     try:
         params = {
-            "num_results": "5",
+            "num_results": "10",
             "products_sort_by": "Relevance",
             "title": title.strip(),
         }
@@ -151,7 +165,7 @@ def fetch_book_details(title: str, author: str = None, region: str = "us", timeo
     if not products:
         try:
             kw_params = {
-                "num_results": "5",
+                "num_results": "10",
                 "products_sort_by": "Relevance",
                 "keywords": f"{title} {author or ''}".strip(),
             }
@@ -163,8 +177,7 @@ def fetch_book_details(title: str, author: str = None, region: str = "us", timeo
 
     # 3. Enrich ASINs via Audnex
     if products:
-        results = []
-        for prod in products[:5]:
+        for prod in products[:8]:
             asin = prod.get("asin")
             if not asin:
                 continue
@@ -174,17 +187,15 @@ def fetch_book_details(title: str, author: str = None, region: str = "us", timeo
                 if ax_resp.status_code == 200 and ax_resp.json().get("asin"):
                     cleaned = clean_result(ax_resp.json())
                     if cleaned.get("title"):
-                        results.append(cleaned)
-                        if is_title_match(title, cleaned["title"]):
-                            break
+                        all_results.append(cleaned)
+                        if is_title_match(title, cleaned["title"]) and is_author_match(author, cleaned.get("author")):
+                            return all_results
             except Exception:
                 continue
-        if results:
-            return results
 
-    # 4. Fallback 2: OpenLibrary Search
+    # 4. Fallback 2: OpenLibrary Search (runs if Audible returned nothing OR no verified match)
     try:
-        ol_params = {"title": title.strip(), "limit": 3}
+        ol_params = {"title": title.strip(), "limit": 5}
         if author and author.strip():
             ol_params["author"] = author.strip()
         ol_resp = requests.get(
@@ -195,12 +206,11 @@ def fetch_book_details(title: str, author: str = None, region: str = "us", timeo
         )
         if ol_resp.status_code == 200:
             docs = ol_resp.json().get("docs") or []
-            if docs:
-                d = docs[0]
+            for d in docs:
                 cover_url = f"https://covers.openlibrary.org/b/id/{d['cover_i']}-L.jpg" if d.get("cover_i") else None
                 author_name = d["author_name"][0] if d.get("author_name") else author
                 pub_year = str(d["first_publish_year"])[:4] if d.get("first_publish_year") else None
-                return [{
+                all_results.append({
                     "title": d.get("title") or title.strip(),
                     "subtitle": d.get("subtitle") or None,
                     "author": author_name,
@@ -213,17 +223,17 @@ def fetch_book_details(title: str, author: str = None, region: str = "us", timeo
                     "isbn": d["isbn"][0] if d.get("isbn") else None,
                     "genres": d["subject"][:4] if d.get("subject") else None,
                     "series": None,
-                }]
+                })
     except Exception:
         pass
 
-    return []
+    return all_results
 
 
-def find_verified_match(results: list, searched_title: str) -> dict | None:
-    """Returns the first result whose title matches searched_title, or None."""
+def find_verified_match(results: list, searched_title: str, searched_author: str | None = None) -> dict | None:
+    """Returns the first result matching title (and author if provided), or None."""
     for item in results:
-        if is_title_match(searched_title, item.get("title", "")):
+        if is_title_match(searched_title, item.get("title", "")) and is_author_match(searched_author, item.get("author")):
             return item
     return None
 
@@ -261,10 +271,16 @@ def write_m4b_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
         audio.tags["aART"] = [meta["author"]]
         audio.tags["\xa9ART"] = [meta["author"]]
 
-    # Remove COMPOSER so ABS doesn't misread it, and set NARRATOR strictly
-    audio.tags.pop("\xa9wrt", None)
-    audio.tags.pop("----:com.apple.iTunes:COMPOSER", None)
-    audio.tags.pop("----:com.apple.iTunes:NARRATOR", None)
+    # Purge ALL existing Composer / Narrator atoms (case-insensitive) to prevent Mp3tag '\\' duplicates
+    keys_to_remove = [
+        k for k in audio.tags.keys()
+        if k in ("\xa9wrt", "\xa9nrt")
+        or k.lower().endswith(":composer")
+        or k.lower().endswith(":narrator")
+    ]
+    for k in keys_to_remove:
+        audio.tags.pop(k, None)
+
     if meta.get("narrator"):
         audio.tags["----:com.apple.iTunes:NARRATOR"] = [meta["narrator"].encode("utf-8")]
 
@@ -333,10 +349,14 @@ def write_mp3_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
         tags.add(TPE2(encoding=3, text=meta["author"]))
         tags.add(TPE1(encoding=3, text=meta["author"]))
 
-    # Remove COMPOSER (TCOM) and set NARRATOR strictly
+    # Purge ALL existing Composer / Narrator frames (case-insensitive) to prevent Mp3tag '\\' duplicates
     tags.delall("TCOM")
-    tags.delall("TXXX:COMPOSER")
-    tags.delall("TXXX:NARRATOR")
+    for frame_id in list(tags.keys()):
+        if frame_id.startswith("TXXX:"):
+            desc = frame_id.split(":", 1)[1].lower()
+            if desc in ("composer", "narrator"):
+                tags.delall(frame_id)
+
     if meta.get("narrator"):
         tags.add(TXXX(encoding=3, desc="NARRATOR", text=meta["narrator"]))
 
@@ -499,14 +519,14 @@ def main():
         if part2:
             print(f"    [...] Trying Title='{part1}', Author='{part2}'...")
             results = fetch_book_details(title=part1, author=part2, region=region)
-            meta = find_verified_match(results, part1)
+            meta = find_verified_match(results, part1, part2)
             if not meta and results:
                 last_unmatched = results[0]
 
             if not meta:
                 print(f"    [...] Swapping -> Trying Title='{part2}', Author='{part1}'...")
                 results = fetch_book_details(title=part2, author=part1, region=region)
-                meta = find_verified_match(results, part2)
+                meta = find_verified_match(results, part2, part1)
                 if meta:
                     current_title = part2
                 elif results:
@@ -544,7 +564,7 @@ def main():
 
             print(f"    [...] Retrying with Title='{search_title}', Author='{search_author}'...")
             results = fetch_book_details(title=search_title, author=search_author, region=region)
-            meta = find_verified_match(results, search_title)
+            meta = find_verified_match(results, search_title, search_author)
             last_unmatched = results[0] if results and not meta else None
 
         if not meta:
