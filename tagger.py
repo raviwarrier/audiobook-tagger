@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import shutil
+import argparse
 import urllib.parse
 from datetime import datetime
 import tkinter as tk
@@ -437,24 +438,30 @@ def parse_filename(stem: str) -> tuple[str, str | None]:
     return stem.strip(), None
 
 
-def resolve_target() -> tuple[str, list[str]]:
+def resolve_args() -> tuple[str, list[str], str]:
     """
-    Accepts a folder path or single audio file via CLI argument,
-    or opens a folder picker dialog if no valid argument is passed.
-    Returns (base_folder_path, list_of_filenames_to_process).
+    Parses CLI arguments for optional target path and --region flag.
+    If no path is provided, opens a GUI folder picker and prompts for region.
+    Returns (base_folder_path, list_of_filenames, region).
     """
-    if len(sys.argv) > 1:
-        target = os.path.abspath(sys.argv[1].strip('"'))
+    parser = argparse.ArgumentParser(description="Fetch audiobook metadata, tag, and organize files.")
+    parser.add_argument("target", nargs="?", help="Path to an audiobook file (.mp3/.m4b) or folder")
+    parser.add_argument("-r", "--region", default=None, help="Audible region (us, uk, ca, au, in, de, fr, it, es, jp)")
+    args = parser.parse_args()
+
+    if args.target:
+        target = os.path.abspath(args.target.strip('"'))
+        region = (args.region or "us").strip().lower()
         if os.path.isfile(target):
             if target.lower().endswith((".mp3", ".m4b")):
-                return os.path.dirname(target), [os.path.basename(target)]
+                return os.path.dirname(target), [os.path.basename(target)], region
             raise SystemExit(f"[-] Error: Unsupported file type '{os.path.basename(target)}'. Only .mp3 and .m4b are supported.")
         if os.path.isdir(target):
             files = [
                 f for f in os.listdir(target)
                 if os.path.isfile(os.path.join(target, f)) and f.lower().endswith((".mp3", ".m4b"))
             ]
-            return target, files
+            return target, files, region
         raise SystemExit(f"[-] Error: Path not found: {target}")
 
     root = tk.Tk()
@@ -463,11 +470,12 @@ def resolve_target() -> tuple[str, list[str]]:
     if not folder:
         raise SystemExit("[-] Error: No folder selected.")
 
+    region = (args.region or input("[?] Audible region [us/uk/ca/au/in/de/fr] (default: us): ").strip() or "us").lower()
     files = [
         f for f in os.listdir(folder)
         if os.path.isfile(os.path.join(folder, f)) and f.lower().endswith((".mp3", ".m4b"))
     ]
-    return folder, files
+    return folder, files, region
 
 
 def generate_and_save_report(folder_path: str, succeeded: list[str], failed: list[tuple[str, str]]):
@@ -506,9 +514,8 @@ def generate_and_save_report(folder_path: str, succeeded: list[str], failed: lis
 
 
 def main():
-    folder_path, audio_files = resolve_target()
-    region = input("[?] Audible region [us/uk/ca/au/in/de/fr] (default: us): ").strip().lower() or "us"
-    print(f"\n[*] Target directory: {folder_path}\n")
+    folder_path, audio_files, region = resolve_args()
+    print(f"\n[*] Target directory: {folder_path} (Region: {region})\n")
 
     if not audio_files:
         print("[-] No .mp3 or .m4b files found.")

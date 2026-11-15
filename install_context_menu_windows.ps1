@@ -12,7 +12,7 @@ if (-not (Test-Path $TaggerScript)) {
     exit 1
 }
 
-$CommandValue = "cmd.exe /k `"`"$PythonExe`" `"$TaggerScript`" `"%1`"`""
+$CommandValue = "cmd.exe /c `"`"$PythonExe`" `"$TaggerScript`" `"%1`"`""
 
 $Targets = @(
     "HKCU:\Software\Classes\Directory\shell\TagAudiobook",
@@ -30,4 +30,4 @@ foreach ($KeyPath in $Targets) {
     Set-ItemProperty -Path $CmdPath -Name "(Default)" -Value $CommandValue
 }
 
-Write-Host "[+] 'Tag this' context menu added successfully for folders, .m4b, and .mp3 files." -ForegroundColor Green
+Write-Host "[+] 'Tag this' context menu updated successfully (auto-closes on completion)." -ForegroundColor Green
