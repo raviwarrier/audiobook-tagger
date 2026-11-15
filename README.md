@@ -84,7 +84,7 @@ When run without arguments, `tagger.py` opens a folder picker dialog and prompts
 To add a **"Tag this"** option when right-clicking folders, `.m4b`, or `.mp3` files in Windows Explorer:
 
 ```powershell
-.\install_context_menu.ps1
+.\install_context_menu_windows.ps1
 ```
 
 This runs `tagger.py` silently using the `us` region by default and closes the terminal window automatically upon completion (unless a book requires manual input). To change the default region used by the context menu, append `-r <region>` (e.g., `-r uk`) to `$CommandValue` in `install_context_menu.ps1` and re-run it.
@@ -92,7 +92,7 @@ This runs `tagger.py` silently using the `us` region by default and closes the t
 To remove the context menu entries later:
 
 ```powershell
-.\uninstall_context_menu.ps1
+.\uninstall_context_menu_windows.ps1
 ```
 
 ## Credits
