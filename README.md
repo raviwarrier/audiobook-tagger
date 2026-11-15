@@ -65,13 +65,13 @@ A lightweight Python utility to automatically fetch audiobook metadata, embed ta
 To add a **"Tag this"** option when right-clicking folders, `.m4b`, or `.mp3` files in Windows Explorer:
 
 ```powershell
-.\install_context_menu.ps1
+.\install_context_menu_windows.ps1
 ```
 
 To remove the context menu entries later:
 
 ```powershell
-.\uninstall_context_menu.ps1
+.\uninstall_context_menu_windows.ps1
 ```
 
 ## Credits
