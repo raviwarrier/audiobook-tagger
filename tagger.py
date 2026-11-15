@@ -437,17 +437,37 @@ def parse_filename(stem: str) -> tuple[str, str | None]:
     return stem.strip(), None
 
 
-def resolve_folder() -> str:
-    """Accepts folder path via CLI argument or opens a folder picker dialog."""
-    if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]):
-        return sys.argv[1]
+def resolve_target() -> tuple[str, list[str]]:
+    """
+    Accepts a folder path or single audio file via CLI argument,
+    or opens a folder picker dialog if no valid argument is passed.
+    Returns (base_folder_path, list_of_filenames_to_process).
+    """
+    if len(sys.argv) > 1:
+        target = os.path.abspath(sys.argv[1].strip('"'))
+        if os.path.isfile(target):
+            if target.lower().endswith((".mp3", ".m4b")):
+                return os.path.dirname(target), [os.path.basename(target)]
+            raise SystemExit(f"[-] Error: Unsupported file type '{os.path.basename(target)}'. Only .mp3 and .m4b are supported.")
+        if os.path.isdir(target):
+            files = [
+                f for f in os.listdir(target)
+                if os.path.isfile(os.path.join(target, f)) and f.lower().endswith((".mp3", ".m4b"))
+            ]
+            return target, files
+        raise SystemExit(f"[-] Error: Path not found: {target}")
 
     root = tk.Tk()
     root.withdraw()
     folder = filedialog.askdirectory(title="Select Audiobook Folder (Top-Level Only)")
     if not folder:
         raise SystemExit("[-] Error: No folder selected.")
-    return folder
+
+    files = [
+        f for f in os.listdir(folder)
+        if os.path.isfile(os.path.join(folder, f)) and f.lower().endswith((".mp3", ".m4b"))
+    ]
+    return folder, files
 
 
 def generate_and_save_report(folder_path: str, succeeded: list[str], failed: list[tuple[str, str]]):
@@ -486,20 +506,15 @@ def generate_and_save_report(folder_path: str, succeeded: list[str], failed: lis
 
 
 def main():
-    folder_path = resolve_folder()
+    folder_path, audio_files = resolve_target()
     region = input("[?] Audible region [us/uk/ca/au/in/de/fr] (default: us): ").strip().lower() or "us"
-    print(f"\n[*] Scanning top-level directory: {folder_path}\n")
-
-    audio_files = [
-        f for f in os.listdir(folder_path)
-        if os.path.isfile(os.path.join(folder_path, f)) and f.lower().endswith((".mp3", ".m4b"))
-    ]
+    print(f"\n[*] Target directory: {folder_path}\n")
 
     if not audio_files:
-        print("[-] No .mp3 or .m4b files found in the selected folder.")
+        print("[-] No .mp3 or .m4b files found.")
         return
 
-    print(f"[*] Found {len(audio_files)} audiobook file(s).\n")
+    print(f"[*] Processing {len(audio_files)} audiobook file(s).\n")
 
     succeeded: list[str] = []
     failed: list[tuple[str, str]] = []
