@@ -403,13 +403,35 @@ def write_mp3_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
     tags.save(filepath, v2_version=3)
 
 
+def strip_subtitle_from_title(title: str, subtitle: str | None = None) -> str:
+    """Remove subtitle from title for clean folder/file naming."""
+    if not title:
+        return title
+    # Use the parsed subtitle field if available
+    if subtitle and subtitle.strip():
+        sub = subtitle.strip()
+        if sub in title:
+            new_title = title.replace(sub, "").strip()
+            new_title = re.sub(r"[\s\-:]+$", "", new_title).strip()
+            if new_title:
+                return new_title
+    # Fallback: split on ': ' separator and take the main title part
+    if ": " in title:
+        candidate = title.split(": ")[0].strip()
+        if len(candidate) > 1:
+            return candidate
+    return title
+
+
 def organize_file(filepath: str, base_folder: str, meta: dict) -> str:
     """
     Moves and renames the file to:
     [ALBUM] ([YEAR]) - [ALBUMARTIST]\\[ALBUM] - [ALBUMARTIST].ext
     """
     _, ext = os.path.splitext(filepath)
-    album = sanitize_filename(meta.get("title") or "Unknown Title")
+    raw_title = meta.get("title") or "Unknown Title"
+    subtitle = meta.get("subtitle")
+    album = sanitize_filename(strip_subtitle_from_title(raw_title, subtitle))
     album_artist = sanitize_filename(meta.get("author") or "Unknown Author")
     year = sanitize_filename(meta.get("publishedYear") or "")
 
