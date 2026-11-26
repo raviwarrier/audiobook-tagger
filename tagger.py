@@ -2,9 +2,10 @@ import os
 import re
 import sys
 import shutil
+import json
 import argparse
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 import tkinter as tk
 from tkinter import filedialog
 import requests
@@ -250,6 +251,70 @@ def download_cover_bytes(cover_url: str) -> bytes | None:
     except Exception:
         pass
     return None
+
+
+def fetch_chapters(asin: str, region: str = "us", timeout: int = 10) -> list | None:
+    """Fetch chapter list from Audnexus for a given ASIN."""
+    if not asin:
+        return None
+    try:
+        url = f"https://api.audnex.us/books/{urllib.parse.quote(asin.upper())}/chapters?region={urllib.parse.quote(region)}"
+        resp = requests.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            chapters = data.get("chapters")
+            if isinstance(chapters, list):
+                return chapters
+    except Exception:
+        pass
+    return None
+
+
+def get_audio_info(filepath: str) -> tuple[int, int]:
+    """Return (file_size_bytes, duration_ms) for an audio file."""
+    file_size = os.path.getsize(filepath)
+    duration_ms = 0
+    try:
+        if filepath.lower().endswith(".m4b"):
+            audio = MP4(filepath)
+        else:
+            audio = ID3(filepath)
+        info = audio.info
+        duration_ms = int(getattr(info, "length", 0) * 1000)
+    except Exception:
+        pass
+    return file_size, duration_ms
+
+
+def save_chapters_json(target_dir: str, filename: str, chapters: list, file_size: int, duration_ms: int) -> str | None:
+    """Save chapters.json inside [book]/.audiosilo/ folder."""
+    if not chapters:
+        return None
+    try:
+        audiosilo_dir = os.path.join(target_dir, ".audiosilo")
+        os.makedirs(audiosilo_dir, exist_ok=True)
+
+        payload = {
+            "version": 1,
+            "generator": "chapter-sidecar",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "from": "audnexus",
+            "files": [
+                {
+                    "path": filename,
+                    "size": file_size,
+                    "duration_ms": duration_ms,
+                }
+            ],
+            "chapters": chapters,
+        }
+
+        chapters_path = os.path.join(audiosilo_dir, "chapters.json")
+        with open(chapters_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return chapters_path
+    except Exception:
+        return None
 
 
 def write_m4b_tags(filepath: str, meta: dict, cover_bytes: bytes | None):
@@ -627,6 +692,21 @@ def main():
 
             rel_dest = organize_file(filepath, folder_path, meta)
             print(f"    [→] Organized to: {rel_dest}\n")
+
+            # Fetch and save chapters from Audnexus
+            asin = meta.get("asin")
+            if asin:
+                chapters = fetch_chapters(asin, region)
+                if chapters:
+                    target_dir = os.path.join(folder_path, os.path.dirname(rel_dest))
+                    final_filename = os.path.basename(rel_dest)
+                    target_path = os.path.join(target_dir, final_filename)
+                    file_size, duration_ms = get_audio_info(target_path)
+                    chapters_path = save_chapters_json(
+                        target_dir, final_filename, chapters, file_size, duration_ms
+                    )
+                    if chapters_path:
+                        print(f"    [→] Chapters saved to: {os.path.relpath(chapters_path, folder_path)}\n")
             succeeded.append(filename)
         except Exception as e:
             print(f"    [!] Failed to tag/organize file: {e}\n")
